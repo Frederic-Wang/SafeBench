@@ -6,7 +6,7 @@
   <arg name='timeout' default='10'/>
   <arg name='agent_config' default='$(find manager)/config/ego_vehicle.json'/>
   <arg name='data_file' default='$(find scenario_node)/data/standard.json'/>
-  <arg name='scenario_id' default='-1'/>
+  <arg name='scenario_id' default='5'/>
   <arg name='route_id' default='-1'/>
   <arg name='method' default=''/>
   <arg name='risk_level' default='-1'/>

@@ -49,25 +49,10 @@ from carla_ros_scenario_runner_types.msg import CarlaScenarioStatus
 from carla_ros_scenario_runner_types.srv import GetEgoVehicleRoute
 from carla_ros_scenario_runner_types.srv import UpdateRenderMap
 
-import threading
-
 import multiprocessing as mp
+
 # Version of scenario_runner
 VERSION = '0.9.11'
-
-class MyThread(threading.Thread):
-    def __init__(self, threadId, config, ego_name, function):
-        threading.Thread.__init__(self)
-        self.threadId = threadId
-        self.config = config
-        self.ego_name = ego_name
-        self.function = function
-    def run(self):
-        print("Starting" + str(self.threadId))
-        self.function(self.config, self.ego_name)
-        print("Exiting" + str(self.threadId))
-
-
 
 class ApplicationStatus(Enum):
     """
@@ -144,7 +129,6 @@ class ScenarioRunner(object):
             self.module_agent = importlib.import_module(module_name)
 
         # Create the ScenarioManager
-        # comment: Fred 12.3
         self.manager = ScenarioManagerDynamic(self._args.debug, self._args.sync, self._args.timeout)
 
         # Create signal handler for SIGINT
@@ -159,7 +143,6 @@ class ScenarioRunner(object):
         self.scenario_status_publisher = rospy.Publisher("/scenario/status", CarlaScenarioStatus,
                                                          latch=True, queue_size=1)
         # self.initial_pose_publisher = rospy.Publisher("/initialpose", PoseWithCovarianceStamped, queue_size=10)
-        self.process_pool = mp.Pool(mp.cpu_count())
 
     def scenario_status_updated(self, status):
         rospy.loginfo("Scenario status updated to {}".format(status))
@@ -271,29 +254,6 @@ class ScenarioRunner(object):
             'vehicle.*', 'controller.ai.walker',
             'walker.*'
         ])
-
-    def _clean_up_temp(self):
-        for i, _ in enumerate(self.ego_vehicles):
-            if self.ego_vehicles[i]:
-                if not self._args.waitForEgo:
-                    print("Destroying ego vehicle {}".format(self.ego_vehicles[i].id))
-                    self.ego_vehicles[i].destroy()
-                self.ego_vehicles[i] = None
-        self.ego_vehicles = []
-
-        if self.agent_instance:
-            self.agent_instance.destroy()
-            self.agent_instance = None
-
-        self._clear_all_actors([
-            'sensor.other.collision', 'sensor.lidar.ray_cast',
-            'sensor.other.lane_invasion', 'sensor.camera.rgb',
-            # 'sensor.pseudo.tf', 'sensor.pseudo.objects',
-            # 'sensor.pseudo.odom', 'sensor.pseudo.speedometer',
-            'vehicle.*', 'controller.ai.walker',
-            'walker.*'
-        ])
-
 
     def _clear_all_actors(self, actor_filters):
         """Clear specific actors."""
@@ -564,7 +524,6 @@ class ScenarioRunner(object):
         # Prepare scenario
         print("Preparing scenario: " + config.name)
         try:
-
             self._prepare_ego_vehicles(config.ego_vehicles)
             print("============= create route scenario")
 
@@ -617,218 +576,6 @@ class ScenarioRunner(object):
         self._cleanup()
         return result, record
 
-    def _load_world(self, town):
-        """
-        load world with specific town
-        """
-        self.scenario_status_updated(ApplicationStatus.STARTING)
-        result = False
-        if self._args.reloadWorld:
-            print("============= world reloading")
-            self.world = self.client.load_world(town)
-        else:
-            previous_town = self.client.get_world().get_map().name
-            updated = previous_town == town
-            if not updated:
-                print('loading map', town)
-                self.world = self.client.load_world(town)
-
-            while not updated:
-                response = None
-                rospy.wait_for_service('/gym_node/update_render_map')
-                try:
-                    requester = rospy.ServiceProxy('/gym_node/update_render_map', UpdateRenderMap)
-                    print('updating render map')
-                    response = requester(town)
-                    if response is not None:
-                        updated = response.result
-                except rospy.ServiceException as e:
-                    rospy.loginfo('Run scenario service call failed: {}'.format(e))
-
-        self.world = self.client.get_world()
-        if self._args.sync:
-            settings = self.world.get_settings()
-            settings.synchronous_mode = True
-            settings.fixed_delta_seconds = 1.0 / self.frame_rate
-            self.world.apply_settings(settings)
-
-            self.traffic_manager.set_synchronous_mode(True)
-            self.traffic_manager.set_random_device_seed(int(self._args.trafficManagerSeed))
-
-        CarlaDataProvider.set_client(self.client)
-        CarlaDataProvider.set_world(self.world)
-        CarlaDataProvider.set_traffic_manager_port(int(self._args.trafficManagerPort))
-
-        # Wait for the world to be ready
-        if CarlaDataProvider.is_sync_mode():
-            self.world.tick()
-        else:
-            self.world.wait_for_tick()
-        if CarlaDataProvider.get_map().name != town and CarlaDataProvider.get_map().name != "OpenDriveMap":
-            print("The CARLA server uses the wrong map: {}".format(CarlaDataProvider.get_map().name))
-            print("This scenario requires to use map: {}".format(town))
-            return False
-        print("============= finished world loading")
-
-        return True
-
-    def _load_ego(self, config):
-        """
-        already have world, initialize ego and actors
-        """
-        ego_vehicles = None if config is None else config.ego_vehicles
-
-        ego_vehicle_found = False
-        # if config.initial_transform is not None:
-        #     # TODO: check initial pose
-        #     self._set_initial_position(config.initial_transform)
-        print("============= waiting for ego vehicle")
-        if self._args.waitForEgo:
-            while not ego_vehicle_found and not self._shutdown_requested:
-                vehicles = self.client.get_world().get_actors().filter('vehicle.*')
-                print(ego_vehicles, vehicles, config, config.ego_vehicles, self.ego_vehicles)
-                if len(ego_vehicles) == 0:
-                    print("============= Empty ego vehicle list, checking default rolename 'ego_vehicle'")
-                    default_rolename_found = False
-                    for actor in self.client.get_world().get_actors():
-                        if actor.attributes.get('role_name') == 'ego_vehicle':
-                            default_rolename_found = True
-                    if default_rolename_found:
-                        print("============= Found default rolename 'ego_vehicle'. Stop waiting")
-                        break
-                    else:
-                        print("============= Default rolename 'ego_vehicle' not found. Waiting ... ")
-                for ego_vehicle in ego_vehicles:
-                    print("============= Enter here")
-                    ego_vehicle_found = False
-                    print("vehicles in scenario runner: ", vehicles)
-                    for vehicle in vehicles:
-                        # if vehicle.attributes['role_name'] == ego_vehicle.rolename:
-                        if vehicle.attributes['role_name'] == ego_vehicle.attributes['role_name']:
-                            ego_vehicle_found = True
-                            if config.initial_transform is not None:
-                                # if config.initial_pose is not None:
-                                before = ego_vehicle.get_transform()
-                                print('Setting ego transform', config.initial_transform)
-                                location_correct = False
-                                num_trial = 0
-                                world = self.client.get_world()
-                                while not location_correct:
-                                    num_trial += 1
-                                    ego_vehicle.set_transform(config.initial_transform)
-                                    # self._set_initial_position(config.initial_pose)
-                                    time.sleep(num_trial)
-                                    world.wait_for_tick()
-                                    current_transform = ego_vehicle.get_transform()
-                                    distance = config.initial_transform.location.distance(current_transform.location)
-                                    print(current_transform.location, config.initial_transform.location, distance)
-                                    if distance <= 2.5:
-                                        location_correct = True
-                                    if num_trial >= 10 and not location_correct:
-                                        return False
-                                after = ego_vehicle.get_transform()
-                                print('trial', num_trial, 'before', before, 'after', after)
-                            break
-                    if not ego_vehicle_found:
-                        print("Not all ego vehicles ready. Waiting ... ")
-                        time.sleep(1)
-                        break
-
-
-    def _load_run_scenario(self, config, ego_role_name):
-        """
-        already have world, initialize ego and actors
-        """
-        CarlaDataProvider.set_client(self.client)
-        CarlaDataProvider.set_world(self.world)
-        CarlaDataProvider.set_traffic_manager_port(int(self._args.trafficManagerPort))
-        record = {}
-        # try:
-        #     self._load_ego(config)
-        # except Exception as e:
-        #     print("error occurs when loading ego vehicle")
-        #     print(e)
-        if self._args.agent:
-            print("============= create agent")
-            agent_class_name = self.module_agent.__name__.title().replace('_', '')
-            try:
-                self.agent_instance = getattr(self.module_agent, agent_class_name)(self._args.agentConfig)
-                config.agent = self.agent_instance
-            except Exception as e:          # pylint: disable=broad-except
-                traceback.print_exc()
-                print("Could not setup required agent due to {}".format(e))
-                self._cleanup()
-                return False, record
-                # Prepare scenario
-        print("Preparing scenario: " + config.name)
-        try:
-            # print("carla data provider world: ", CarlaDataProvider.get_world())
-            # print("self.world: ", self.world)
-            # print()
-            # self._prepare_ego_vehicles(config.ego_vehicles)
-            # print("============= create route scenario")
-
-            # TODO: visualize scenario (10.12)
-
-            # scenario = None
-            scenario = RouteScenarioDynamic(world=self.world, config=config, ego_role_name = ego_role_name,debug_mode=self._args.debug, timeout=800)
-
-        except Exception as exception:  # pylint: disable=broad-except
-            print("The scenario cannot be loaded")
-            traceback.print_exc()
-            print(exception)
-            self._cleanup()
-            return False, record
-
-        try:
-            if self._args.record:
-                recorder_dir = self._args.record
-                # recorder_dir = os.path.join(os.getenv('SCENARIO_RUNNER_ROOT', "./"), self._args.record)
-                recorder_name = os.path.join(recorder_dir, '{}.log'.format(config.name))
-                print('creating dir {}'.format(recorder_dir))
-                os.makedirs(recorder_dir, exist_ok=True)
-                print('logging record to {}'.format(recorder_name))
-                # recorder_name = "{}/{}/{}.log".format(
-                #     os.getenv('SCENARIO_RUNNER_ROOT', "./"), self._args.record, config.name)
-                self.client.start_recorder(recorder_name, True)
-
-            cur_manager = ScenarioManagerDynamic(self._args.debug, self._args.sync, self._args.timeout)
-            # Load scenario and run it
-            cur_manager.load_scenario(scenario, self.agent_instance)
-            self.scenario_status_updated(ApplicationStatus.RUNNING)
-            record = cur_manager.run_scenario()
-            # print("carla data provider world 1: ", CarlaDataProvider.get_world())
-            self.scenario_status_updated(ApplicationStatus.SHUTTINGDOWN)
-            # print("carla data provider world 2: ", CarlaDataProvider.get_world())
-
-            # Provide outputs if required
-            self._analyze_scenario(config)
-
-            # Remove all actors, stop the recorder and save all criterias (if needed)
-            # print("carla data provider world 3: ", CarlaDataProvider.get_world())
-            scenario.remove_all_actors()
-            # print("carla data provider world 4: ", CarlaDataProvider.get_world())
-            if self._args.record:
-                self.client.stop_recorder()
-                self._record_criteria(cur_manager.scenario.get_criteria(), recorder_name)
-
-            result = True
-
-        except Exception as e:              # pylint: disable=broad-except
-            traceback.print_exc()
-            print(e)
-            result = False
-
-        # TODO: here only clean actors and ego
-
-
-        # self._cleanup()
-        self._clean_up_temp()
-        return result, record
-
-
-
-
     def _run_scenarios(self):
         """
         Run conventional scenarios (e.g. implemented using the Python API of ScenarioRunner)
@@ -878,13 +625,10 @@ class ScenarioRunner(object):
         route_file_formatter = '/home/carla/Evaluation/src/evaluation/scenario_node/route/scenario_%02d_routes/scenario_%02d_route_%02d.xml'
         scenario_file_formatter = '/home/carla/Evaluation/src/evaluation/scenario_node/route/scenarios/scenario_%02d.json'
         # testing_method = None
-        map_town_config = {}
         for item in data_full:
-            # print(item)
             route_file = route_file_formatter % (item['scenario_id'], item['scenario_id'], item['route_id'])
             scenario_file = scenario_file_formatter % item['scenario_id']
             parsed_configs = RouteParser.parse_routes_file(route_file, scenario_file)
-            # print(parsed_configs)
             assert len(parsed_configs) == 1, item
             config = parsed_configs[0]
             config.data_id = item['data_id']
@@ -896,16 +640,6 @@ class ScenarioRunner(object):
 
             route_configurations.append(config)
 
-            # build town and config mapping map
-            cur_town = config.town
-            if cur_town in map_town_config:
-                cur_config_list = map_town_config[cur_town]
-                cur_config_list.append(config)
-                map_town_config[cur_town] = cur_config_list
-            else:
-                cur_config_list = [config]
-                map_town_config[cur_town] = cur_config_list
-
             # if testing_method is not None:
             #     assert testing_method == item['method']
             # else:
@@ -915,17 +649,10 @@ class ScenarioRunner(object):
             print('training agent...')
             for episode in range(self._args.train_agent_episodes):
                 print('episode {}/{}'.format(episode + 1, self._args.train_agent_episodes))
-                for town in map_town_config:
-                    # TODO: initialize world here
-                    self._load_world(town)
-                    for config_idx, config in enumerate(map_town_config[town]):
-                        # TODO: initialize ego, load and run scenario, multi process
-                        print("config")
-                # for config_idx, config in enumerate(route_configurations):
-                #     print('config {}/{}'.format(config_idx + 1, len(route_configurations)))
-                #     # for now, in each of config, only have one route
-                #     result, record = self._load_and_run_scenario(config)
-                #     self._cleanup()
+                for config_idx, config in enumerate(route_configurations):
+                    print('config {}/{}'.format(config_idx + 1, len(route_configurations)))
+                    result, record = self._load_and_run_scenario(config)
+                    self._cleanup()
         else:
             record_dir = os.path.join(self._args.outputDir, 'testing_records')
             os.makedirs(record_dir, exist_ok=True)
@@ -937,55 +664,20 @@ class ScenarioRunner(object):
             else:
                 print('creating testing records...')
                 record_dict = {}
-            # for config_idx, config in enumerate(route_configurations):
-            #     print('config {}/{}'.format(config_idx + 1, len(route_configurations)))
-            #     if config.data_id in record_dict and len(record_dict[config.data_id]) > 0:
-            #         print('skipping tested scenario', config.data_id)
-            #         continue
-            #     for repeat in range(self._args.repetitions):
-            #         result, record = self._load_and_run_scenario(config)
-            #         if result:
-            #             record_dict[config.data_id] = record
-            #             print('saving testing records to', record_filename)
-            #             joblib.dump(record_dict, record_filename)
-            #             print(config.data_id, 'saved!', 'length:', len(record))
-            #         self._cleanup()
-            thread_list = []
-            for town in map_town_config:
-                # TODO: initialize world here
-                self._load_world(town)
-                # print("map town config in scenario runner: ", map_town_config[town])
-                i = 0
-                for config_idx, config in enumerate(map_town_config[town]):
-                    # TODO: initialize ego, load and run scenario, multi process
-                    # print("ego vehicles: ", config.ego_vehicles)
-                    # self._load_ego(config)
-                    ego_name = "ego_vehicle"+str(i)
-                    # print("other actors transform in scenario runner: ", config.other_actors[0].transform)
-                    # result, record = self._load_run_scenario(config, ego_name)
-                    # self.process_pool.apply_async(self._load_run_scenario, args=(config, ego_name))
-                    # thread.start_new_thread(self._load_run_scenario, (config, ego_name) )
-                    thread = MyThread(i, config, ego_name, self._load_run_scenario)
-                    thread_list.append(thread)
-                    # thread.start()
-                    i += 1
-                    if i == 1:
-                        break
-                    # print("config")
-                    # if config.data_id in record_dict and len(record_dict[config.data_id]) > 0:
-                # self.process_pool.close()
-                # try:
-                #     self.process_pool.join()
-                # except Exception as e:
-                #     print("error when excuting process: ", e)
-                for cur_thread in thread_list:
-                    cur_thread.start()
-                time.sleep(100)
-                # print("here ===============================")
-                # CarlaDataProvider.cleanup()
-        time.sleep(100)
-        print("here ===============================")
-        # self._cleanup()
+            for config_idx, config in enumerate(route_configurations):
+                print('config {}/{}'.format(config_idx + 1, len(route_configurations)))
+                if config.data_id in record_dict and len(record_dict[config.data_id]) > 0:
+                    print('skipping tested scenario', config.data_id)
+                    continue
+                for repeat in range(self._args.repetitions):
+                    result, record = self._load_and_run_scenario(config)
+                    if result:
+                        record_dict[config.data_id] = record
+                        print('saving testing records to', record_filename)
+                        joblib.dump(record_dict, record_filename)
+                        print(config.data_id, 'saved!', 'length:', len(record))
+                    self._cleanup()
+        self._cleanup()
         return result
 
     def run(self):

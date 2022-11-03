@@ -103,7 +103,8 @@ class ScenarioManagerDynamic(object):
             self._agent.cleanup()
             self._agent = None
 
-        CarlaDataProvider.cleanup()
+        # here can only clean actors and egos
+        # CarlaDataProvider.cleanup()
 
     def load_scenario(self, scenario, agent=None):
         """
@@ -145,6 +146,7 @@ class ScenarioManagerDynamic(object):
         #     print(i)
 
         """First spawn all actors on the map"""
+        print("ego vehicle in scenario manager: ", self.ego_vehicles)
         self._init_scenarios()
 
         # actors = list(CarlaDataProvider.get_actors())
@@ -162,11 +164,14 @@ class ScenarioManagerDynamic(object):
                 if snapshot:
                     timestamp = snapshot.timestamp
             # print("scenario defination: ", self.scenario_class.sampled_scenarios_definitions)
+            # print("ego: ", self.ego_vehicles[0])
             # print("ego transform: ", CarlaDataProvider.get_transform(self.ego_vehicles[0]))
+            # print("ego speed: ", CarlaDataProvider.get_velocity(self.ego_vehicles[0]))
             if timestamp:
                 self._get_update(timestamp)
 
-        self.cleanup()
+        # todo: here just delete all actors/egos, don't make world None
+        # self.cleanup()
 
         self.end_system_time = time.time()
         end_game_time = GameTime.get_time()

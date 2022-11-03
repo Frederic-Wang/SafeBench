@@ -67,11 +67,6 @@ class CarlaEnv(gym.Env):
 
         self.render = True
 
-        self.discrete = params['discrete']
-
-        self._timestamp = self.world.get_snapshot().timestamp.elapsed_seconds
-        self._tick = 0
-
         # for multiple egos
         self.ego_routeplanner_dict = {}
 
@@ -212,7 +207,7 @@ class CarlaEnv(gym.Env):
     def step(self, actions, scenario_status):
         done = False
         info_list = []
-        for i in range(len(actions)):
+        for i in range(actions):
             action = actions[i]
             if len(action) == 2:
                 if self.discrete:
@@ -240,12 +235,6 @@ class CarlaEnv(gym.Env):
                 raise RuntimeError('Wrong number of actions.')
 
             cur_ego = self.ego_vehicles[i]
-
-            # Comment: here hardcode ego actions
-
-            throttle = 0.1
-            steer = 0
-            brake = 0
 
             # Apply control
             act = carla.VehicleControl(throttle=float(throttle),
@@ -321,62 +310,11 @@ class CarlaEnv(gym.Env):
         return self._get_obs(), self._get_reward(), done, copy.deepcopy(info_list)
 
     def _get_actor_polygons(self, filt):
-        """Get the bounding box polygon of actors.
-
-                Args:
-                    filt: the filter indicating what type of actors we'll look at.
-
-                Returns:
-                    actor_poly_dict: a dictionary containing the bounding boxes of specific actors.
-                """
-        actor_poly_dict = {}
-        for actor in self.world.get_actors().filter(filt):
-            # Get x, y and yaw of the actor
-            trans = actor.get_transform()
-            x = trans.location.x
-            y = trans.location.y
-            yaw = trans.rotation.yaw / 180 * np.pi
-            # Get length and width
-            bb = actor.bounding_box
-            l = bb.extent.x
-            w = bb.extent.y
-            # Get bounding box polygon in the actor's local coordinate
-            poly_local = np.array([[l, w], [l, -w], [-l, -w], [-l, w]]).transpose()
-            # Get rotation matrix to transform to global coordinate
-            R = np.array([[np.cos(yaw), -np.sin(yaw)],
-                          [np.sin(yaw), np.cos(yaw)]])
-            # Get global bounding box polygon
-            poly = np.matmul(R, poly_local).transpose() + np.repeat([[x, y]], 4, axis=0)
-            actor_poly_dict[actor.id] = poly
-        return actor_poly_dict
+        pass
 
     def _get_actor_info(self, filt):
-        """Get the info of actors.
+        pass
 
-                Args:
-                    filt: the filter indicating what type of actors we'll look at.
-
-                Returns:
-                    actor_acceleration_dict: a dictionary containing the accelerations of specific actors.
-                """
-        actor_trajectory_dict = {}
-        actor_acceleration_dict = {}
-        actor_angular_velocity_dict = {}
-        actor_velocity_dict = {}
-
-        for actor in self.world.get_actors().filter(filt):
-            actor_trajectory_dict[actor.id] = actor.get_transform()
-            actor_acceleration_dict[actor.id] = actor.get_acceleration()
-            actor_angular_velocity_dict[actor.id] = actor.get_angular_velocity()
-            actor_velocity_dict[actor.id] = actor.get_velocity()
-
-        return actor_trajectory_dict, actor_acceleration_dict, actor_angular_velocity_dict, actor_velocity_dict
-
-    def _set_synchronous_mode(self, synchronous=True):
-        """Set whether to use the synchronous mode.
-        """
-        self.settings.synchronous_mode = synchronous
-        self.world.apply_settings(self.settings)
     """
     this should return a list of all obs for all egos
     """
@@ -385,35 +323,8 @@ class CarlaEnv(gym.Env):
         # TODO: implement this function
         obs = []
         for cur_ego in self.ego_vehicles:
-            # TODO: these variables should be changed
-
-            state = np.array([
-                0, 0, 0, 0, (0, 0), 0, 0
-            ], dtype=object)
             ob = {
-            # 'camera': camera.astype(np.uint8),
-            # 'lidar': lidar.astype(np.uint8),
-            # 'birdeye': birdeye.astype(np.uint8),
-            # 'state': state,
-            # 'speed': np.float32(state[2]),
-            # 'acc': np.float32(state[6]),
-            # 'velocity': np.array([v.x, v.y, v.z]),
-            # 'acceleration': np.array([acc.x, acc.y, acc.z]),
-            # 'trajectories': self.vehicle_trajectories,
-            # 'accelerations': self.vehicle_accelerations,
-            # 'angular_velocities': self.vehicle_angular_velocities,
-            # 'velocities': self.vehicle_velocities,
-            # 'command': int(self.target_road_option.value),
-            # 'forward_vector': np.array([forward_vector.x, forward_vector.y]),
-            # 'location': np.array([location.x, location.y, location.z]),
-            # 'node': np.array([node_location.x, node_location.y]),
-            # 'target': np.array([target_location.x, target_location.y]),
-            # 'node_forward': np.array([node_forward.x, node_forward.y]),
-            # 'target_forward': np.array([target_forward.x, target_forward.y]),
-            # 'rotation': np.array([ego_trans.rotation.pitch, ego_trans.rotation.yaw, ego_trans.rotation.roll]),
-            # 'waypoint_list': np.array(self.waypoint_location_list),
-            'timestamp': np.float32(self._timestamp),
-            'tick': int(self._tick),
+                'tick': int(self._tick),
             }
             obs.append(ob)
         return obs

@@ -57,25 +57,43 @@ class EnvWrapper(gym.Wrapper):
                 time.sleep(1)
         rospy.loginfo('gym_node: terminate')
 
-    def step(self, action):
-        action = self._postprocess_action(action)
-        # print("action: ", action)
-        reward = 0
-        cost = 0
+    def step(self, actions):
+        """
+
+        Args:
+            actions: a list of actions
+
+        Returns: lists of o, reward, done, info
+
+        """
+        actions = self._postprocess_action(actions)
+
+        reward = [0 for i in range(len(actions))]
+        cost = [0 for i in range(len(actions))]
         done = False
+
+        o = None
+        info = None
         for i in range(self.frame_skip):
-            o, r, d, info = self._env.step(action, self.scenario_status)
+            # here o, r, info are all lists
+            # d should not be list
+            o, r, d, info = self._env.step(actions, self.scenario_status)
+            # what about this d?
             if d:
                 done = True
             r, info = self._preprocess_reward(r, info)
             o = self._preprocess_obs(o)
-            reward += r
-            if "cost" in info:
-                cost += info["cost"]
+
+            for i in range(len(reward)):
+                reward[i] += r[i]
+
+            for i in range(len(info)):
+                if "cost" in info[i]:
+                    cost[i] += info[i]["cost"]
             if done:
                 break
-        if "cost" in info:
-            info["cost"] = cost
+        # if "cost" in info:
+        #     info["cost"] = cost
         if done:
             self.wait_for_terminate(wait=False)
         return o, reward, done, info
@@ -110,31 +128,52 @@ class EnvWrapper(gym.Wrapper):
             raise NotImplementedError
 
     def _preprocess_obs(self, obs):
-        if self.obs_type == 0:
-            return obs['state'][:4].astype(np.float64)
-        elif self.obs_type == 1:
-            new_obs = np.array([obs['state'][0], obs['state'][1], obs['state'][2], obs['state'][3], 
-                                obs['command'], obs['forward_vector'][0], obs['forward_vector'][1], 
-                                obs['node_forward'][0], obs['node_forward'][1],
-                                obs['target_forward'][0], obs['target_forward'][1]])
-            return new_obs
-        elif self.obs_type == 2:
-            return {"img": obs['birdeye'], "states": obs['state'][:4].astype(np.float64)}
-        elif self.obs_type == 3:
-            return {"img": obs['camera'], "states": obs['state'][:4].astype(np.float64)}
-        else:
-            raise NotImplementedError
+        self.obs_type = 1
+        """
+
+        Args:
+            obs: a list of obs
+
+        Returns: a list of processed obs
+
+        """
+        # print("====================")
+        # print("obs in env_wrapper")
+        # print(obs)
+        processed_obs = []
+        for ob in obs:
+            # TODO: need to change
+            if self.obs_type == 0:
+                processed_obs.append(ob['state'][:4].astype(np.float64))
+            elif self.obs_type == 1:
+                new_ob = np.array([0, 0, 0, 0,
+                                    0, 0, 0,
+                                    0, 0,
+                                    0, 0])
+                processed_obs.append(new_ob)
+            elif self.obs_type == 2:
+                processed_obs.append({"img": ob['birdeye'], "states": ob['state'][:4].astype(np.float64)})
+            elif self.obs_type == 3:
+                processed_obs.append({"img": ob['camera'], "states": ob['state'][:4].astype(np.float64)})
+            else:
+                raise NotImplementedError
+            # processed_obs.append(ob)
+
+        return processed_obs
 
     def _preprocess_reward(self, reward, info):
         return reward, info
 
-    def _postprocess_action(self, action):
+    def _postprocess_action(self, actions):
         # normalize and clip the action
-        action = action * np.array([self.cfg.ACC_MAX, self.cfg.STEERING_MAX])
-        action[0] = max(min(self.cfg.ACC_MAX, action[0]), -self.cfg.ACC_MAX)
-        action[1] = max(min(self.cfg.STEERING_MAX, action[1]),
-                        -self.cfg.STEERING_MAX)
-        return action
+        processed_actions = []
+        for action in actions:
+            action = action * np.array([self.cfg.ACC_MAX, self.cfg.STEERING_MAX])
+            action[0] = max(min(self.cfg.ACC_MAX, action[0]), -self.cfg.ACC_MAX)
+            action[1] = max(min(self.cfg.STEERING_MAX, action[1]),
+                            -self.cfg.STEERING_MAX)
+            processed_actions.append(action)
+        return processed_actions
 
 params = {
     'number_of_vehicles': 100,

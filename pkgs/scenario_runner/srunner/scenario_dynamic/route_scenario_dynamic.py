@@ -241,7 +241,7 @@ class RouteScenarioDynamic(BasicScenarioDynamic):
         Implementation of a RouteScenario, i.e. a scenario that consists of driving along a pre-defined route,
         along which several smaller scenarios are triggered
     """
-    def __init__(self, world, config, debug_mode=False, criteria_enable=True, timeout=300):
+    def __init__(self, world, config, ego_role_name ,debug_mode=False, criteria_enable=True, timeout=300):
         """
         Setup all relevant parameters and create scenarios along route
         """
@@ -255,7 +255,10 @@ class RouteScenarioDynamic(BasicScenarioDynamic):
 
         self._update_route(world, config, debug_mode)
 
-        ego_vehicle = self._update_ego_vehicle()
+        ego_vehicle = self._update_ego_vehicle(ego_role_name)
+
+        print("==========================================")
+        print("ego vehicle in route scenatio: ", ego_vehicle)
 
         self.list_scenarios = self._build_scenario_instances(world,
                                                              ego_vehicle,
@@ -415,7 +418,7 @@ class RouteScenarioDynamic(BasicScenarioDynamic):
         world.debug.draw_point(waypoints[-1][0].location + carla.Location(z=vertical_shift), size=0.2,
                                color=carla.Color(255, 0, 0), life_time=persistency)
 
-    def _update_ego_vehicle(self):
+    def _update_ego_vehicle(self, ego_role_name):
         """
         Set/Update the start position of the ego_vehicle
         """
@@ -425,7 +428,7 @@ class RouteScenarioDynamic(BasicScenarioDynamic):
 
         ego_vehicle = CarlaDataProvider.request_new_actor('vehicle.lincoln.mkz2017',
                                                           elevate_transform,
-                                                          rolename='ego_vehicle')
+                                                          rolename=ego_role_name)
         # Collision sensor
         collision_bp = self.world.get_blueprint_library().find('sensor.other.collision')
 
@@ -666,14 +669,16 @@ class RouteScenarioDynamic(BasicScenarioDynamic):
         criteria['average_velocity'] = AverageVelocityTest(actor=self.ego_vehicles[0], avg_velocity_success=1e4,
                                                            avg_velocity_acceptable=1e4, optional=True)
         criteria['lane_invasion'] = KeepLaneTest(actor=self.ego_vehicles[0], optional=True)
-        criteria['off_road'] = OffRoadTest(actor=self.ego_vehicles[0], optional=True)
-        criteria['collision'] = CollisionTest(actor=self.ego_vehicles[0], terminate_on_failure=True)
+        # criteria['off_road'] = OffRoadTest(actor=self.ego_vehicles[0], optional=True)
+        # # criteria['collision'] = CollisionTest(actor=self.ego_vehicles[0], terminate_on_failure=True)
+        # # TODO: change here
+        criteria['collision'] = CollisionTest(actor=self.ego_vehicles[0], terminate_on_failure=False)
         criteria['run_red_light'] = RunningRedLightTest(actor=self.ego_vehicles[0])
         criteria['run_stop'] = RunningStopTest(actor=self.ego_vehicles[0])
         if self.route_length > 1:  # only check when evaluating
             criteria['distance_to_route'] = InRouteTest(self.ego_vehicles[0], route=route, offroad_max=30)
             criteria['speed_above_threshold'] = ActorSpeedAboveThresholdTest(actor=self.ego_vehicles[0],
-                                                                             speed_threshold=0.1,
+                                                                             speed_threshold=0.01,
                                                                              below_threshold_max_time=10,
                                                                              terminate_on_failure=True)
             criteria['route_complete'] = RouteCompletionTest(self.ego_vehicles[0], route=route)

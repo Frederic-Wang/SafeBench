@@ -232,17 +232,29 @@ class CarlaRunner:
         total_steps = 0
         for epoch in range(self.epochs):
             try:
-                raw_obs, ep_reward, ep_len, ep_cost = self.env.wait_for_reset(), 0, 0, 0
+                # here raw_obs is a list
+                raw_obs, ep_len = self.env.wait_for_reset(), 0,
+                ep_reward = [0 for i in range(len(raw_obs))]
+                ep_cost = [0 for i in range(len(raw_obs))]
                 if render:
                     self.env.render()
                 for i in range(self.timeout_steps):
                     if self.obs_type > 1:
-                        obs = self.policy.process_img(raw_obs)
+                        obs = []
+                        for cur_ob in raw_obs:
+                            ob = self.policy.process_img(cur_ob)
+                            obs.append(ob)
                     else:
                         obs = raw_obs
-                    res = self.policy.act(obs)
-                    action = res[0]
-                    raw_obs_next, reward, done, info = self.env.step(action)
+                    # here should get a list of actions
+                    actions = []
+                    for cur_ob in obs:
+                        cur_res = self.policy.act(cur_ob)
+                        actions.append(cur_res[0])
+                    # res = self.policy.act(obs)
+                    # action = res[0]
+                    raw_obs_next, reward, done, info = self.env.step(actions)
+
                     if render:
                         self.env.render()
                     time.sleep(sleep)
@@ -250,15 +262,16 @@ class CarlaRunner:
                     if done:
                         break
 
-                    if "cost" in info:
-                        ep_cost += info["cost"]
-
-                    ep_reward += reward
+                    for i in range(len(info)):
+                        if "cost" in info[i]:
+                            ep_cost[i] += info[i]["cost"]
+                        ep_reward[i] += reward[i]
                     ep_len += 1
                     total_steps += 1
                     raw_obs = raw_obs_next
 
-                self.logger.store(EpRet=ep_reward, EpLen=ep_len, EpCost=ep_cost, tab="eval")
+                # self.logger.store(EpRet=ep_reward, EpLen=ep_len, EpCost=ep_cost, tab="eval")
+                # comment: 10.24, here
 
                 # Log info about epoch
                 self._log_metrics(epoch, total_steps)
